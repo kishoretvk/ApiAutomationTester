@@ -37,8 +37,7 @@ if st.button("Add API Configuration"):
         "payload": ""
     }
     st.session_state.api_configs.append(new_api_config)
-    with server_state_lock:
-        server_state.api_configs.append(new_api_config)
+    server_state.api_configs = st.session_state.api_configs.copy()
 
 # Display and edit existing API configurations
 for i, api_config in enumerate(st.session_state.api_configs):
@@ -52,17 +51,14 @@ for i, api_config in enumerate(st.session_state.api_configs):
 
         if st.button("Remove this API", key=f"remove_api_{i}"):
             st.session_state.api_configs.pop(i)
-            with server_state_lock:
-                server_state.api_configs.pop(i)
+            server_state.api_configs = st.session_state.api_configs.copy()
             st.experimental_rerun() # Rerun to update the list
 
 # Update global rate limit in server state when input changes
 if st.session_state.global_rate_limit_rate != global_rate_limit_rate:
     st.session_state.global_rate_limit_rate = global_rate_limit_rate
-    with server_state_lock:
-        server_state.global_rate_limit_rate = global_rate_limit_rate
+    server_state.global_rate_limit_rate = global_rate_limit_rate
 
 if st.session_state.global_rate_limit_period != global_rate_limit_period:
     st.session_state.global_rate_limit_period = global_rate_limit_period
-    with server_state_lock:
-        server_state.global_rate_limit_period = global_rate_limit_period
+    server_state.global_rate_limit_period = global_rate_limit_period
