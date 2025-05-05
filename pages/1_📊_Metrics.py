@@ -16,6 +16,29 @@ from input_handler import load_questions
 st.set_page_config(layout="wide")
 st.title("API Processing Metrics")
 
+# --- Reset Button ---
+if st.button("Reset Metrics & Clear File", key="reset_metrics_button", type="secondary"):
+    # Reset metrics dictionary
+    st.session_state.metrics = {
+        'total_questions': 0,
+        'api_metrics': {},
+        'start_time': None,
+        'end_time': None,
+        'processing_running': False,
+        'stop_processing': False,
+    }
+    # Clear the file uploader state by setting its key in session_state to None
+    if "file_uploader" in st.session_state:
+        st.session_state.file_uploader = None
+    st.success("Metrics reset and file cleared.")
+    # Use st.rerun() to reflect the changes immediately
+    try:
+        st.rerun()
+    except AttributeError:
+        st.warning("Could not automatically rerun page after reset.")
+
+st.divider()
+
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -139,13 +162,40 @@ if questions:
                                 # If 'user_input' key doesn't exist, maybe add as a default key?
                                 payload_template['question_entry'] = question # Example fallback
 
-                            # Make the API call
-                            response = requests.post(
-                                api_config.get('url', ''), # Safely get URL
-                                headers=headers,
-                                json=payload_template,
-                                timeout=15 # Increased timeout
-                            )
+                            # --- Make the API call dynamically based on method ---
+                            method = api_config.get('method', 'POST').upper()
+                            url = api_config.get('url', '')
+
+                            response = None
+                            request_args = {
+                                "headers": headers,
+                                "timeout": 15
+                            }
+
+                            if method in ['POST', 'PUT', 'PATCH']:
+                                request_args["json"] = payload_template
+                                if method == 'POST':
+                                    response = requests.post(url, **request_args)
+                                elif method == 'PUT':
+                                    response = requests.put(url, **request_args)
+                                else: # PATCH
+                                    response = requests.patch(url, **request_args)
+                            elif method == 'GET':
+                                # For GET, data is usually sent as URL params.
+                                # We'll add the payload items as params for simplicity,
+                                # though this might not be standard REST practice for complex bodies.
+                                request_args["params"] = payload_template
+                                response = requests.get(url, **request_args)
+                            elif method == 'DELETE':
+                                # DELETE might have a body or not, depending on API.
+                                # Sending payload as json for flexibility, though often it's param-based or no body.
+                                request_args["json"] = payload_template
+                                response = requests.delete(url, **request_args)
+                            else:
+                                # Handle unsupported methods or raise an error
+                                logging.error(f"Unsupported HTTP method '{method}' for API '{api_name}'")
+                                raise ValueError(f"Unsupported HTTP method: {method}")
+
                             response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
 
                             # Update metrics on success
@@ -174,7 +224,7 @@ if questions:
                 st.session_state.metrics['processing_running'] = False
                 if not st.session_state.metrics.get('stop_processing', False):
                     st.success("Processing finished.")
-                st.experimental_rerun() # Rerun to update metrics display and button states
+                st.rerun() # Rerun to update metrics display and button states
 
     with col_stop:
         # Disable button if not running
@@ -193,4 +243,4 @@ display_metrics()
 # Auto-refresh only if processing is actively running
 if st.session_state.metrics.get('processing_running', False):
     time.sleep(3) # Slightly shorter refresh
-    st.experimental_rerun()
+    st.rerun()

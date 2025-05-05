@@ -1,4 +1,4 @@
-# API Processor App
+# API Test Automation App ATAP
 
 This application is a versatile Streamlit-based tool designed to process questions or data points from various file formats (TXT, CSV, XLSX) by sending them to one or more configured external APIs. It efficiently manages API calls, respects rate limits, and provides features for resuming interrupted processing jobs.
 

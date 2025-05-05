@@ -9,7 +9,7 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("Welcome to the API Processor App")
+st.title("Welcome to the API Test Automation App")
 
 st.markdown("""
 This application is a versatile tool designed to process questions or data points from various file formats (TXT, CSV, XLSX) by sending them to one or more configured external APIs. It efficiently manages API calls, respects rate limits, and provides features for resuming interrupted processing jobs.
