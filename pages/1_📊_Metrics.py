@@ -7,11 +7,9 @@ import numpy as np
 import logging
 import requests # Ensure requests is imported
 
-# Assuming these imports exist and are correct
 from input_handler import load_questions
-# from api_client import ApiClient, RateLimiter # Commenting out as ApiClient isn't used directly in the fixed processing loop
-# from state_manager import load_state, save_state, is_processed, mark_as_processed # Commenting out unused state functions
-# from output_writer import write_result # Commenting out as write_result isn't used directly in the fixed processing loop
+from output_writer import write_api_log, write_api_metrics
+from api_logger import APILogger
 
 st.set_page_config(layout="wide")
 st.title("API Processing Metrics")
@@ -76,10 +74,16 @@ def display_metrics():
         col2.metric("Errors", api_metrics_data.get('errors', 0))
         # Add more detailed metrics like latency, payload size if needed later
 
-# --- Main UI Section ---
-uploaded_file = st.file_uploader("Upload input file", type=["txt", "csv", "xlsx"], key="file_uploader")
+# Initialize variables
+questions = None
 
-questions = None # Initialize questions to None
+# File uploader with session state key management
+if 'file_uploader_key' not in st.session_state:
+    st.session_state.file_uploader_key = 0
+    
+uploaded_file = st.file_uploader("Upload input file", 
+                               type=["txt", "csv", "xlsx"],
+                               key=f"file_uploader_{st.session_state.file_uploader_key}")
 
 if uploaded_file:
     file_type = uploaded_file.name.split('.')[-1].lower()
@@ -185,7 +189,26 @@ if questions:
                                 # We'll add the payload items as params for simplicity,
                                 # though this might not be standard REST practice for complex bodies.
                                 request_args["params"] = payload_template
+                                start_time = time.time()
                                 response = requests.get(url, **request_args)
+                                duration = time.time() - start_time
+                                
+                                # Log the request/response
+                                logger = APILogger(api_name)
+                                logger.log_request(
+                                    {
+                                        "method": method,
+                                        "url": url,
+                                        "headers": headers,
+                                        "body": payload_template
+                                    },
+                                    {
+                                        "status_code": response.status_code,
+                                        "headers": dict(response.headers),
+                                        "body": response.json() if response.content else {}
+                                    },
+                                    duration
+                                )
                             elif method == 'DELETE':
                                 # DELETE might have a body or not, depending on API.
                                 # Sending payload as json for flexibility, though often it's param-based or no body.
@@ -197,10 +220,33 @@ if questions:
                                 raise ValueError(f"Unsupported HTTP method: {method}")
 
                             response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-
-                            # Update metrics on success
+                            
+                            # Calculate processing time
+                            end_time = time.time()
+                            processing_time = end_time - request_data.get("start_time", end_time)
+                            
+                            # Write API call log
+                            write_api_log(
+                                api_name,
+                                {
+                                    "headers": headers,
+                                    "payload": payload_template,
+                                    "url": url,
+                                    "method": method,
+                                    "start_time": request_data.get("start_time", end_time)
+                                },
+                                {
+                                    "status_code": response.status_code,
+                                    "headers": dict(response.headers),
+                                    "body": response.json() if response.content else {},
+                                    "processing_time": processing_time
+                                }
+                            )
+                            
+                            # Update and write metrics
                             st.session_state.metrics['api_metrics'][api_name]['processed'] += 1
-                            # TODO: Add result writing if needed: write_result(f"{api_name}_results.jsonl", response.json())
+                            st.session_state.metrics['api_metrics'][api_name].setdefault('times', []).append(processing_time)
+                            write_api_metrics(api_name, st.session_state.metrics['api_metrics'][api_name])
 
                         except json.JSONDecodeError as json_err:
                             st.session_state.metrics['api_metrics'][api_name]['errors'] += 1
@@ -223,7 +269,11 @@ if questions:
                 st.session_state.metrics['end_time'] = time.time()
                 st.session_state.metrics['processing_running'] = False
                 if not st.session_state.metrics.get('stop_processing', False):
-                    st.success("Processing finished.")
+                    # Save metrics for each API
+                    for api_name, api_metrics in st.session_state.metrics['api_metrics'].items():
+                        write_api_metrics(api_name, api_metrics)
+                    output_file = "metrics_saved"  # Confirmation message
+                    st.success(f"Processing finished! Results saved to {output_file}")
                 st.rerun() # Rerun to update metrics display and button states
 
     with col_stop:

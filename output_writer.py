@@ -1,29 +1,35 @@
-# output_writer.py
-
-import asyncio
 import json
-import aiofiles # Import aiofiles for asynchronous file operations
-import logging # Import logging module
+import logging
+from pathlib import Path
+from datetime import datetime
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-async def write_result(file_path: str, result: dict):
-    """
-    Asynchronously writes a single result (JSON object) to a JSONL file.
-
-    Args:
-        file_path: Path to the output JSONL file.
-        result: The result dictionary to write.
-    """
+def write_api_log(api_name: str, request: dict, response: dict):
+    """Write API call log to JSONL file"""
     try:
-        async with aiofiles.open(file_path, mode='a') as f:
-            await f.write(json.dumps(result) + '\n')
-        logging.info(f"Successfully wrote result to {file_path}")
-    except IOError as e:
-        logging.error(f"Error writing result to file {file_path}: {e}")
-        # Depending on requirements, you might want to re-raise the exception
-        # or handle it differently (e.g., store failed writes)
+        log_dir = Path("output/logs")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
+        log_file = log_dir / f"{api_name}_calls.jsonl"
+        with open(log_file, 'a') as f:
+            json.dump({
+                "timestamp": datetime.now().isoformat(),
+                "api_name": api_name,
+                "request": request,
+                "response": response,
+                "processing_time": (datetime.now() - request['start_time']).total_seconds()
+            }, f)
+            f.write('\n')
     except Exception as e:
-        logging.error(f"An unexpected error occurred while writing to {file_path}: {e}")
-        # Handle other potential exceptions during serialization or writing
+        logging.error(f"Error writing API log: {e}")
+
+def write_api_metrics(api_name: str, metrics: dict):
+    """Write API metrics to JSON file"""
+    try:
+        metrics_dir = Path("output/metrics")
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        
+        metrics_file = metrics_dir / f"{api_name}_metrics.json"
+        with open(metrics_file, 'w') as f:
+            json.dump(metrics, f, indent=2)
+    except Exception as e:
+        logging.error(f"Error writing metrics: {e}")
