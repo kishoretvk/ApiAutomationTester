@@ -154,7 +154,15 @@ if questions:
                 # Initialize metrics structure for this run
                 for cfg in api_configs:
                     api_name = cfg.get("name", "Unnamed API")
-                    st.session_state.metrics['api_metrics'][api_name] = {'processed': 0, 'errors': 0}
+                    st.session_state.metrics['api_metrics'][api_name] = {
+                        'processed': 0,
+                        'successes': 0, 
+                        'errors': 0,
+                        'latencies': [],
+                        'payload_sizes': [],
+                        'status_codes': {},
+                        'timestamps': []
+                    }
 
                 # --- Start the actual processing loop ---
                 st.info("Processing started...")
@@ -199,10 +207,13 @@ if questions:
                             if method in ['POST', 'PUT', 'PATCH']:
                                 request_args["json"] = payload_template
                                 if method == 'POST':
+                                    start_time = time.time()
                                     response = requests.post(url, **request_args)
                                 elif method == 'PUT':
+                                    start_time = time.time()
                                     response = requests.put(url, **request_args)
                                 else: # PATCH
+                                    start_time = time.time()
                                     response = requests.patch(url, **request_args)
                             elif method == 'GET':
                                 # For GET, data is usually sent as URL params.
@@ -239,11 +250,17 @@ if questions:
                                 logging.error(f"Unsupported HTTP method '{method}' for API '{api_name}'")
                                 raise ValueError(f"Unsupported HTTP method: {method}")
 
-                            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+                            # Track success before raising for status
+                            if 200 <= response.status_code < 300:
+                                st.session_state.metrics['api_metrics'][api_name]['successes'] += 1
+                            else:
+                                st.session_state.metrics['api_metrics'][api_name]['errors'] += 1
+                            
+                            response.raise_for_status() # Still raise HTTPError for bad responses
                             
                             # Calculate processing time
                             end_time = time.time()
-                            processing_time = end_time - request_data.get("start_time", end_time)
+                            processing_time = end_time - start_time
                             
                             # Write API call log
                             write_api_log(
@@ -253,7 +270,7 @@ if questions:
                                     "payload": payload_template,
                                     "url": url,
                                     "method": method,
-                                    "start_time": request_data.get("start_time", end_time)
+                                    "start_time": start_time
                                 },
                                 {
                                     "status_code": response.status_code,

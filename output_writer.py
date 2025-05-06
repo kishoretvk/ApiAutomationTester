@@ -23,18 +23,33 @@ def write_api_log(api_name: str, request: dict, response: dict):
         logging.error(f"Error writing API log: {e}")
 
 def write_api_metrics(api_name: str, metrics: dict):
-    """Write enhanced API metrics to JSON file"""
+    """Write enhanced API metrics to JSON file with robust error handling"""
     try:
         metrics_dir = Path("output/metrics")
         metrics_dir.mkdir(parents=True, exist_ok=True)
         
-        # Calculate derived metrics
-        metrics['avg_latency'] = sum(metrics.get('latencies', [])) / len(metrics['latencies']) if metrics.get('latencies') else 0
-        metrics['avg_payload_size'] = sum(metrics.get('payload_sizes', [])) / len(metrics['payload_sizes']) if metrics.get('payload_sizes') else 0
-        metrics['error_percentage'] = (metrics.get('errors', 0) / metrics.get('processed', 1)) * 100
+        # Safely calculate derived metrics with zero-division protection
+        latencies = metrics.get('latencies', [])
+        metrics['avg_latency'] = sum(latencies)/len(latencies) if latencies else 0
+        
+        payload_sizes = metrics.get('payload_sizes', [])
+        metrics['avg_payload_size'] = sum(payload_sizes)/len(payload_sizes) if payload_sizes else 0
+        
+        total_requests = metrics.get('processed', 0) + metrics.get('errors', 0)
+        metrics['error_percentage'] = (metrics['errors']/total_requests)*100 if total_requests > 0 else 0
+        metrics['success_percentage'] = (metrics.get('successes', 0)/total_requests)*100 if total_requests > 0 else 0
         
         metrics_file = metrics_dir / f"{api_name}_metrics.json"
-        with open(metrics_file, 'w') as f:
+        
+        # Write to temp file first then rename to ensure atomic write
+        temp_file = metrics_dir / f"temp_{api_name}_metrics.json"
+        with open(temp_file, 'w') as f:
             json.dump(metrics, f, indent=2)
+        
+        # Replace existing file
+        temp_file.replace(metrics_file)
+        logging.info(f"Successfully saved metrics for {api_name}")
+        
     except Exception as e:
-        logging.error(f"Error writing metrics: {e}")
+        logging.error(f"Error writing metrics for {api_name}: {str(e)}")
+        raise
