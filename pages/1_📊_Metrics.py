@@ -69,10 +69,30 @@ def display_metrics():
 
     for api_name, api_metrics_data in metrics.get('api_metrics', {}).items():
         st.write(f"**{api_name}**")
-        col1, col2 = st.columns(2)
+        
+        # Main metrics row
+        col1, col2, col3 = st.columns(3)
         col1.metric("Processed", api_metrics_data.get('processed', 0))
         col2.metric("Errors", api_metrics_data.get('errors', 0))
-        # Add more detailed metrics like latency, payload size if needed later
+        col3.metric("Error %", f"{api_metrics_data.get('error_percentage', 0):.2f}%")
+        
+        # Performance metrics row
+        col4, col5, col6 = st.columns(3)
+        col4.metric("Avg Latency", f"{api_metrics_data.get('avg_latency', 0):.4f}s")
+        col5.metric("Avg Payload", f"{api_metrics_data.get('avg_payload_size', 0):.2f} bytes")
+        col6.metric("RPM", api_metrics_data.get('rpm', 0))
+        
+        # Status code distribution
+        st.write("Status Code Distribution:")
+        if api_metrics_data.get('status_codes'):
+            status_df = pd.DataFrame.from_dict(
+                api_metrics_data['status_codes'], 
+                orient='index',
+                columns=['Count']
+            )
+            st.dataframe(status_df)
+        else:
+            st.write("No status code data available")
 
 # Initialize variables
 questions = None
@@ -244,9 +264,19 @@ if questions:
                             )
                             
                             # Update and write metrics
-                            st.session_state.metrics['api_metrics'][api_name]['processed'] += 1
-                            st.session_state.metrics['api_metrics'][api_name].setdefault('times', []).append(processing_time)
-                            write_api_metrics(api_name, st.session_state.metrics['api_metrics'][api_name])
+                            # Update metrics with detailed information
+                            api_metrics = st.session_state.metrics['api_metrics'][api_name]
+                            api_metrics['processed'] += 1
+                            api_metrics.setdefault('latencies', []).append(processing_time)
+                            api_metrics.setdefault('payload_sizes', []).append(len(str(response.content)))
+                            api_metrics.setdefault('status_codes', {})[str(response.status_code)] = api_metrics['status_codes'].get(str(response.status_code), 0) + 1
+                            api_metrics.setdefault('timestamps', []).append(time.time())
+                            
+                            # Calculate RPM (requests per minute)
+                            current_time = time.time()
+                            api_metrics['rpm'] = len([t for t in api_metrics['timestamps'] if current_time - t <= 60])
+                            
+                            write_api_metrics(api_name, api_metrics)
 
                         except json.JSONDecodeError as json_err:
                             st.session_state.metrics['api_metrics'][api_name]['errors'] += 1
