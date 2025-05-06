@@ -1,0 +1,13 @@
+{
+  "processed": 0,
+  "successes": 0,
+  "errors": 12,
+  "latencies": [],
+  "payload_sizes": [],
+  "status_codes": {},
+  "timestamps": [],
+  "avg_latency": 0,
+  "avg_payload_size": 0,
+  "error_percentage": 100.0,
+  "success_percentage": 0.0
+}

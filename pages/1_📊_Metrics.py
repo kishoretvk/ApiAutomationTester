@@ -82,17 +82,31 @@ def display_metrics():
         col5.metric("Avg Payload", f"{api_metrics_data.get('avg_payload_size', 0):.2f} bytes")
         col6.metric("RPM", api_metrics_data.get('rpm', 0))
         
-        # Status code distribution
-        st.write("Status Code Distribution:")
+        # Enhanced Status Code Visualization
+        st.subheader("Status Code Analysis")
         if api_metrics_data.get('status_codes'):
             status_df = pd.DataFrame.from_dict(
-                api_metrics_data['status_codes'], 
+                api_metrics_data['status_codes'],
                 orient='index',
                 columns=['Count']
+            ).sort_index()
+            
+            # Add color coding
+            def status_color(val):
+                if str(val).startswith('2'): return 'color: green'
+                elif str(val).startswith('4'): return 'color: orange'
+                else: return 'color: red'
+            
+            # Display as styled table
+            st.dataframe(
+                status_df.style.applymap(status_color),
+                use_container_width=True
             )
-            st.dataframe(status_df)
+            
+            # Add bar chart
+            st.bar_chart(status_df)
         else:
-            st.write("No status code data available")
+            st.warning("No status code data collected yet")
 
 # Initialize variables
 questions = None
@@ -183,23 +197,19 @@ if questions:
                         api_name = api_config.get("name", "Unnamed API")
                         try:
                             # Parse headers and payload template safely
-                            headers = json.loads(api_config.get('headers', '{}') or '{}') # Ensure valid JSON string
-                            payload_template_str = api_config.get('payload', '{}') or '{}' # Ensure valid JSON string
+                            headers = json.loads(api_config.get('headers', '{}') or '{}')
+                            payload_template_str = api_config.get('payload', '{}') or '{}'
                             payload_template = json.loads(payload_template_str)
 
                             # Replace placeholder with current question/entry
                             if 'user_input' in payload_template:
                                 payload_template['user_input'] = question
                             else:
-                                # If 'user_input' key doesn't exist, maybe add as a default key?
-                                payload_template['question_entry'] = question # Example fallback
+                                payload_template['question_entry'] = question
 
-                            # --- Make the API call dynamically based on method ---
+                            # Prepare request
                             method = api_config.get('method', 'POST').upper()
                             url = api_config.get('url', '')
-
-                            response = None
-                            # Prepare request arguments
                             request_args = {
                                 "headers": headers,
                                 "timeout": 15,
@@ -216,65 +226,42 @@ if questions:
                                     request_args['headers'] = {}
                                 request_args['headers']['Authorization'] = f"Bearer {api_config['auth_config']['current_token']}"
 
+                            # Make API call
+                            start_time = time.time()
                             if method in ['POST', 'PUT', 'PATCH']:
                                 request_args["json"] = payload_template
-                                if method == 'POST':
-                                    start_time = time.time()
-                                    response = requests.post(url, **request_args)
-                                elif method == 'PUT':
-                                    start_time = time.time()
-                                    response = requests.put(url, **request_args)
-                                else: # PATCH
-                                    start_time = time.time()
-                                    response = requests.patch(url, **request_args)
+                                response = getattr(requests, method.lower())(url, **request_args)
                             elif method == 'GET':
-                                # For GET, data is usually sent as URL params.
-                                # We'll add the payload items as params for simplicity,
-                                # though this might not be standard REST practice for complex bodies.
                                 request_args["params"] = payload_template
-                                start_time = time.time()
                                 response = requests.get(url, **request_args)
-                                duration = time.time() - start_time
-                                
-                                # Log the request/response
-                                logger = APILogger(api_name)
-                                logger.log_request(
-                                    {
-                                        "method": method,
-                                        "url": url,
-                                        "headers": headers,
-                                        "body": payload_template
-                                    },
-                                    {
-                                        "status_code": response.status_code,
-                                        "headers": dict(response.headers),
-                                        "body": response.json() if response.content else {}
-                                    },
-                                    duration
-                                )
                             elif method == 'DELETE':
-                                # DELETE might have a body or not, depending on API.
-                                # Sending payload as json for flexibility, though often it's param-based or no body.
                                 request_args["json"] = payload_template
                                 response = requests.delete(url, **request_args)
                             else:
-                                # Handle unsupported methods or raise an error
-                                logging.error(f"Unsupported HTTP method '{method}' for API '{api_name}'")
                                 raise ValueError(f"Unsupported HTTP method: {method}")
 
-                            # Track success before raising for status
-                            if 200 <= response.status_code < 300:
-                                st.session_state.metrics['api_metrics'][api_name]['successes'] += 1
+                            # Track metrics
+                            api_metrics = st.session_state.metrics['api_metrics'][api_name]
+                            is_success = 200 <= response.status_code < 300
+                            
+                            if is_success:
+                                api_metrics['successes'] += 1
                             else:
-                                st.session_state.metrics['api_metrics'][api_name]['errors'] += 1
+                                api_metrics['errors'] += 1
                             
-                            response.raise_for_status() # Still raise HTTPError for bad responses
-                            
-                            # Calculate processing time
-                            end_time = time.time()
-                            processing_time = end_time - start_time
-                            
-                            # Write API call log
+                            # Only raise for status if we want to stop on errors
+                            # response.raise_for_status()  # Removed to continue processing
+
+                            # Update metrics
+                            processing_time = time.time() - start_time
+                            api_metrics['processed'] += 1
+                            api_metrics.setdefault('latencies', []).append(processing_time)
+                            api_metrics.setdefault('payload_sizes', []).append(len(str(response.content)))
+                            api_metrics.setdefault('status_codes', {})[str(response.status_code)] = api_metrics['status_codes'].get(str(response.status_code), 0) + 1
+                            api_metrics.setdefault('timestamps', []).append(time.time())
+                            api_metrics['rpm'] = len([t for t in api_metrics['timestamps'] if time.time() - t <= 60])
+
+                            # Log the call
                             write_api_log(
                                 api_name,
                                 {
@@ -291,31 +278,18 @@ if questions:
                                     "processing_time": processing_time
                                 }
                             )
-                            
-                            # Update and write metrics
-                            # Update metrics with detailed information
-                            api_metrics = st.session_state.metrics['api_metrics'][api_name]
-                            api_metrics['processed'] += 1
-                            api_metrics.setdefault('latencies', []).append(processing_time)
-                            api_metrics.setdefault('payload_sizes', []).append(len(str(response.content)))
-                            api_metrics.setdefault('status_codes', {})[str(response.status_code)] = api_metrics['status_codes'].get(str(response.status_code), 0) + 1
-                            api_metrics.setdefault('timestamps', []).append(time.time())
-                            
-                            # Calculate RPM (requests per minute)
-                            current_time = time.time()
-                            api_metrics['rpm'] = len([t for t in api_metrics['timestamps'] if current_time - t <= 60])
-                            
+
                             write_api_metrics(api_name, api_metrics)
 
                         except json.JSONDecodeError as json_err:
                             st.session_state.metrics['api_metrics'][api_name]['errors'] += 1
-                            logging.error(f"JSON Error for API '{api_name}': {json_err}. Headers: '{api_config.get('headers', '')}', Payload Template: '{payload_template_str}'")
+                            logging.error(f"JSON Error for API '{api_name}': {json_err}")
                         except requests.exceptions.RequestException as req_err:
                             st.session_state.metrics['api_metrics'][api_name]['errors'] += 1
-                            logging.error(f"Request Error for API '{api_name}' processing question '{question}': {req_err}")
+                            logging.error(f"Request Error for API '{api_name}': {req_err}")
                         except Exception as e:
                             st.session_state.metrics['api_metrics'][api_name]['errors'] += 1
-                            logging.error(f"General Error for API '{api_name}' processing question '{question}': {e}")
+                            logging.error(f"Error processing API '{api_name}': {e}")
 
                     # Update progress bar after processing all APIs for one question
                     progress_bar.progress((i + 1) / total_q)
