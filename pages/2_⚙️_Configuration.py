@@ -1,9 +1,14 @@
 import streamlit as st
-from streamlit_server_state import server_state, server_state_lock # Import server_state
-import requests # Import requests for making API calls
-import json # Import json for parsing headers/payload
-import time # Import time for potential delays
-import logging # Import the logging module
+from streamlit_server_state import server_state, server_state_lock
+import requests
+import json
+import time
+import logging
+import os
+try:
+    from jsonpath_ng import parse  # For JSON path extraction
+except ImportError:
+    st.error("jsonpath-ng package not found. Please install it with: pip install jsonpath-ng")
 
 st.set_page_config(layout="wide") # Ensure wide layout for better display
 st.title("API Configuration")
@@ -45,12 +50,22 @@ st.subheader("API Configurations")
 # Button to add a new API configuration
 if st.button("Add API Configuration", key="add_api_button"):
     new_api_config = {
-        "name": f"API {len(st.session_state.api_configs) + 1}",
-        "url": "",
-        "method": "POST",
-        "headers": "{}", # Default empty JSON object
-        "payload": "{\n  \"user_input\": \"\"\n}" # Default JSON with user_input
-    }
+                                "name": f"API {len(st.session_state.api_configs) + 1}",
+                                "url": "",
+                                "method": "POST",
+                                "headers": "{}",
+                                "payload": "",
+                                "disable_ssl_verify": False,
+                                "auth_config": {
+                                    "auth_url": "",
+                                    "auth_method": "POST",
+                                    "auth_headers": "{}",
+                                    "auth_payload": "",
+                                    "token_path": "token",  # JSON path to extract token
+                                    "current_token": "",
+                                    "cert_path": ""
+                                }
+                            }
     st.session_state.api_configs.append(new_api_config)
     server_state.api_configs = st.session_state.api_configs.copy()
     # Set the new expander to be open by default - not possible without 'key'
@@ -79,7 +94,73 @@ for i, api_config in enumerate(api_configs_copy):
         api_config['method'] = st.selectbox("HTTP Method", method_options, index=current_method_index, key=f"api_method_{i}")
         api_config['headers'] = st.text_area("Headers (JSON)", value=api_config.get('headers', '{}'), key=f"api_headers_{i}")
         api_config['payload'] = st.text_area("Payload Template", value=api_config.get('payload', '{\n  "user_input": ""\n}'), key=f"api_payload_{i}")
-        # TODO: Add certificate upload field later
+        api_config['disable_ssl_verify'] = st.checkbox(
+            "Disable SSL Verification", 
+            value=api_config.get('disable_ssl_verify', False),
+            key=f"disable_ssl_{i}"
+        )
+        if api_config['disable_ssl_verify']:
+            st.warning("Warning: SSL verification is disabled - this is less secure!")
+
+        # Authorization Configuration Section
+        st.subheader("Authorization Settings")
+        auth_config = api_config['auth_config']
+        auth_config['auth_url'] = st.text_input("Auth Endpoint URL", 
+            value=auth_config.get('auth_url', ''),
+            key=f"auth_url_{i}")
+        auth_config['auth_method'] = st.selectbox("Auth Method",
+            options=["POST", "GET"],
+            index=0 if auth_config.get('auth_method') == "POST" else 1,
+            key=f"auth_method_{i}")
+        auth_config['auth_headers'] = st.text_area("Auth Headers (JSON)",
+            value=auth_config.get('auth_headers', '{}'),
+            key=f"auth_headers_{i}")
+        auth_config['auth_payload'] = st.text_area("Auth Payload Template",
+            value=auth_config.get('auth_payload', '{\n  "username": "",\n  "password": ""\n}'),
+            key=f"auth_payload_{i}")
+        auth_config['token_path'] = st.text_input("Token JSON Path",
+            value=auth_config.get('token_path', 'token'),
+            key=f"token_path_{i}")
+        
+        # Certificate Upload
+        cert_file = st.file_uploader("Upload Certificate",
+            type=['pem', 'crt', 'cert', 'key'],
+            key=f"cert_upload_{i}")
+        if cert_file:
+            cert_path = f"certs/{api_config['name']}_{cert_file.name}"
+            os.makedirs("certs", exist_ok=True)
+            with open(cert_path, "wb") as f:
+                f.write(cert_file.getbuffer())
+            auth_config['cert_path'] = cert_path
+
+        if st.button("Get Authorization Token", key=f"get_token_{i}"):
+                try:
+                    headers = json.loads(auth_config['auth_headers'])
+                    payload = json.loads(auth_config['auth_payload'])
+                    cert = auth_config.get('cert_path')
+                    
+                    response = requests.request(
+                        method=auth_config['auth_method'],
+                        url=auth_config['auth_url'],
+                        headers=headers,
+                        json=payload,
+                        cert=cert,
+                        verify=not api_config['disable_ssl_verify']
+                    )
+                    response.raise_for_status()
+                    
+                    # Extract token using JSON path
+                    jsonpath_expr = parse(auth_config['token_path'])
+                    matches = [match.value for match in jsonpath_expr.find(response.json())]
+                    if not matches:
+                        raise ValueError(f"Token path '{auth_config['token_path']}' not found in response")
+                    token = matches[0]
+                    auth_config['current_token'] = token
+                    st.success(f"Token acquired: {token[:50]}...")
+                    st.code(token)  # Display full token in copyable format
+                    
+                except Exception as e:
+                    st.error(f"Failed to get token: {str(e)}")
 
         # Update the actual api_configs list in session state and server state
         # This is important because the user might edit fields without clicking a button
@@ -159,7 +240,8 @@ if st.session_state.test_api_index_to_run is not None:
             response = None
             request_args = {
                 "headers": headers,
-                "timeout": 15 # Add a timeout
+                "timeout": 15, # Add a timeout
+                "verify": not current_api_config.get('disable_ssl_verify', False)
             }
 
             if method in ['POST', 'PUT', 'PATCH']:

@@ -199,10 +199,22 @@ if questions:
                             url = api_config.get('url', '')
 
                             response = None
+                            # Prepare request arguments
                             request_args = {
                                 "headers": headers,
-                                "timeout": 15
+                                "timeout": 15,
+                                "verify": not api_config.get('disable_ssl_verify', False)
                             }
+                            
+                            # Add certificate if configured
+                            if api_config.get('auth_config', {}).get('cert_path'):
+                                request_args['cert'] = api_config['auth_config']['cert_path']
+                            
+                            # Add auth token if available
+                            if api_config.get('auth_config', {}).get('current_token'):
+                                if 'headers' not in request_args:
+                                    request_args['headers'] = {}
+                                request_args['headers']['Authorization'] = f"Bearer {api_config['auth_config']['current_token']}"
 
                             if method in ['POST', 'PUT', 'PATCH']:
                                 request_args["json"] = payload_template
