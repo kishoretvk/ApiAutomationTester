@@ -1,22 +1,61 @@
 import pandas as pd
 import streamlit as st
 from io import StringIO
+import aiohttp
+import asyncio
+import ssl
+from typing import Optional, List
+import logging
+from tenacity import retry, stop_after_attempt, wait_exponential
 
-def load_questions(file_obj, file_type: str, column_name: str = None):
-    """
-    Loads questions from a given file object or path.
+class APIHandler:
+    def __init__(self):
+        self.session = None
+        self.timeout = aiohttp.ClientTimeout(total=15)
+        
+    async def __aenter__(self):
+        # Create SSL context that ignores verification if needed
+        ssl_context = ssl.create_default_context()
+        if hasattr(self, 'disable_verify') and self.disable_verify:
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+            
+        self.session = aiohttp.ClientSession(
+            timeout=self.timeout,
+            connector=aiohttp.TCPConnector(ssl=ssl_context)
+        )
+        return self
+        
+    async def __aexit__(self, exc_type, exc, tb):
+        await self.session.close()
+        
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=0.5, max=8)
+    )
+    async def make_request(self, method: str, url: str, **kwargs):
+        try:
+            # Remove verify parameter if present (not supported in aiohttp)
+            kwargs.pop('verify', None)
+            
+            async with getattr(self.session, method.lower())(
+                url,
+                **kwargs
+            ) as response:
+                response.raise_for_status()
+                return await response.json()
+                
+        except aiohttp.ClientError as e:
+            logging.error(f"Request to {url} failed: {str(e)}")
+            raise
+        except Exception as e:
+            logging.error(f"Unexpected error making request: {str(e)}")
+            raise
 
-    Args:
-        file_obj: File object (Streamlit UploadedFile or file path string)
-        file_type: Type of the file ('txt', 'csv', 'xlsx')
-        column_name: Column name for CSV/Excel files containing questions
-
-    Returns:
-        List of questions or empty list on error
-    """
+def load_questions(file_obj, file_type: str, column_name: str = None) -> List[str]:
+    """Loads questions from a given file object or path."""
     questions = []
     try:
-        # Handle text files
         if file_type == 'txt':
             if hasattr(file_obj, 'read'):
                 content = file_obj.read().decode('utf-8')
@@ -25,7 +64,6 @@ def load_questions(file_obj, file_type: str, column_name: str = None):
                 with open(file_obj, 'r') as f:
                     questions = [line.strip() for line in f if line.strip()]
 
-        # Handle CSV/Excel files
         elif file_type in ['csv', 'xlsx']:
             if not column_name:
                 st.error(f"Column name is required for {file_type.upper()} files")
